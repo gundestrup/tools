@@ -20,6 +20,6 @@ Uses bchunk installed via brew
 
 ## website scraper to generate xml for RSS
 Originally used to scrape contence from ERC to generate an RSS feed on a website with links to the ERC site.
-[script file](erc_course.rb)  
-[script read me file](README.ercScraper.md)  
-[script uploade result file to server](run_erc_scraper.sh)
+[script file](erc_scraper/erc_course.rb)  
+[script read me file](erc_scraper/README.ercScraper.md)  
+[script uploade result file to server](erc_scraper/run_erc_scraper.sh)
