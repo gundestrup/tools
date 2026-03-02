@@ -1,15 +1,17 @@
 # tools
 Tools / scripts that are helpfull
 
-## Converter for CloneCD create files to proper iso files
-See file [CloneCD batch converter script](clonecd_batch_help.rb)
-converts
+## CloneCD conver
+Create files to proper iso files
+See script [CloneCD batch converter script](clonecd_batch_help.rb)
+See [Help Me file](README.clonecd_batch_help.md)
+Converts files with format
+* MODE1/2352
+* MODE2/2352
+Using
  - .ccd
- -  .img
+ - .img
  - .cue
-files with format
-MODE1/2352
-MODE2/2352
 to isofiles.
 
 It will search current dir and subdir.
