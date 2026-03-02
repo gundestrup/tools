@@ -3,8 +3,8 @@ Tools / scripts that are helpfull
 
 ## CloneCD conver
 Create files to proper iso files  
-See script [CloneCD batch converter script](clonecd_batch_help.rb)  
-See [Help Me file](README.clonecd_batch_help.md)  
+See script [CloneCD batch converter script](CloneCD/clonecd_batch_help.rb)  
+See [Help Me file](CloneCD/README.clonecd_batch_help.md)  
 Converts files with format  
 * MODE1/2352
 * MODE2/2352
