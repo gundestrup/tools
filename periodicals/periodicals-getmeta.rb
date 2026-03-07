@@ -4,15 +4,17 @@
 # periodicals-getmeta.rb
 #
 # - Single subfolder: .periodicals_getmeta/
-# - Interactive start menu: choose OCR language, runtime toggles (no OCR, force OCR, force lookups), TTL, view/edit defaults
-# - NEW: Clear cache (OCR for ONE file / entire folder, HTTP for entire folder)
+# - Interactive start menu: choose OCR language, runtime toggles (no OCR, force OCR, force lookups), cache TTL
+# - Clear cache: OCR for ONE file / ENTIRE folder, HTTP for ENTIRE folder
 # - Page-wise text extraction (pdftotext) + OCR when needed (using folder default OCR language)
-# - OCR and HTTP caching stored in .periodicals_getmeta/
-# - ISSN/ISBN per page with positions and context for debugging
-# - Crossref & Wikidata lookups (with caching), top-5 candidate selection
+# - OCR and HTTP caching in .periodicals_getmeta/
+# - ISSN/ISBN detection per page with positions and context (for debugging)
+# - Crossref & Wikidata lookups (with caching), interactive top-5 selection
 # - Embeds PRISM/XMP into PDF (via exiftool)
 # - JSONL log (state) with resume (file+sha), includes ocr_hits
 # - Automatically adopts folder defaults after the first successful embed (ISSN/publisher/title)
+# - Booklore sidecar integration (.metadata.json) and cover export (.cover.jpg)
+#   * Sidecar is synchronized to mirror the embedded PDF metadata
 #
 # Dependencies:
 #   brew install exiftool ocrmypdf tesseract poppler
@@ -21,6 +23,7 @@
 # Usage:
 #   ruby periodicals-getmeta.rb "/path/to/folder/with/pdfs"
 #
+
 require 'json'
 require 'uri'
 require 'net/http'
@@ -32,7 +35,7 @@ require 'digest'
 require 'tmpdir'
 
 # ===================== Configuration =====================
-USER_AGENT_EMAIL = "your-email@example.com"     # <-- SET YOUR EMAIL HERE (polite API User-Agent)
+USER_AGENT_EMAIL = "your-email@example.com"     # <-- SET YOUR EMAIL HERE (a polite API User-Agent)
 MAX_CANDIDATES   = 5
 
 CACHE_DIR          = ".periodicals_getmeta"
@@ -45,8 +48,8 @@ TIMEOUT_SECONDS         = 20
 
 # Runtime options (controlled from the start menu)
 $opts = {
-  force_http: false,   # re-lookup: ignore HTTP cache/TTL
-  force_ocr:  false,   # re-OCR for this run: ignore OCR cache
+  force_http: false,   # re-lookup: ignore HTTP cache/TTL for this run
+  force_ocr:  false,   # re-OCR: ignore OCR cache for this run
   no_ocr:     false,   # run without OCR entirely
   ttl_days:   DEFAULT_CACHE_TTL_DAYS,
   debug:      false
@@ -69,6 +72,18 @@ def http_cache_path(base_dir, provider, key)
 end
 
 def ocr_cache_path(base_dir, sha) File.join(cache_dir(base_dir), "ocr_#{sha}.json") end
+
+def sidecar_path_for(pdf)
+  dir  = File.dirname(pdf)
+  base = File.basename(pdf, ".pdf")
+  File.join(dir, "#{base}.metadata.json")
+end
+
+def cover_path_for(pdf)
+  dir  = File.dirname(pdf)
+  base = File.basename(pdf, ".pdf")
+  File.join(dir, "#{base}.cover.jpg")
+end
 
 def acquire_lock!(base_dir)
   lp = lock_path(base_dir)
@@ -281,12 +296,17 @@ end
 # ===================== Filename parsing =====================
 def parse_filename(fn)
   base = File.basename(fn, ".pdf")
-  if base =~ /^(?<title>.+?)\s*[-–]\s*(?<year>\d{4})-. \s*[-–]\s*(?<issue>\d{1,5})$/i
-    return { title:$~[:title].strip, year:$~[:year].to_i, month:$~[:month], issue:$~[:issue], source:"filename" }
+
+  # Pattern: Title - YYYY-MM - ISSUE (ISSUE can be free-form like "160-5 Nov")
+  if base =~ /^(?<title>.+?)\s*[-–]\s*(?<year>\d{4})-. \s*[-–]\s*(?<issue>.+)$/i
+    return { title:$~[:title].strip, year:$~[:year].to_i, month:$~[:month], issue:$~[:issue].strip, source:"filename" }
   end
-  if base =~ /^(?<title>.+?)\s+(?<year>\d{4})-. .*?(?<issue>\d{1,5})$/i
-    return { title:$~[:title].strip, year:$~[:year].to_i, month:$~[:month], issue:$~[:issue], source:"filename(fuzzy)" }
+
+  # Fallback: Title YYYY-MM ... ISSUE
+  if base =~ /^(?<title>.+?)\s+(?<year>\d{4})-. .*?(?<issue>.+)$/i
+    return { title:$~[:title].strip, year:$~[:year].to_i, month:$~[:month], issue:$~[:issue].strip, source:"filename(fuzzy)" }
   end
+
   { title: base.strip, source: "filename(min)" }
 end
 
@@ -556,7 +576,6 @@ def clear_http_cache_all(base_dir)
   say "Deleted #{files.size} HTTP cache file(s)."
 end
 
-# ===================== Start menu =====================
 def show_start_menu!(base_dir, defaults, pdfs)
   loop do
     say "\n========== PERIODICALS-GETMETA =========="
@@ -680,6 +699,87 @@ def show_start_menu!(base_dir, defaults, pdfs)
   end
 end
 
+# ===================== Booklore sidecar & cover =====================
+def ensure_cover_image(pdf, cover_path)
+  return { created: false } if File.exist?(cover_path)
+  Dir.mktmpdir("cover") do |tmp|
+    prefix = File.join(tmp, "cover")
+    # Produce cover-1.jpg (first page only)
+    _, _, ok = run_cmd(%(pdftoppm -jpeg -f 1 -l 1 "#{pdf}" "#{prefix}"))
+    if ok
+      candidate = "#{prefix}-1.jpg"
+      if File.exist?(candidate)
+        FileUtils.cp(candidate, cover_path)
+        return { created: true }
+      end
+    end
+  end
+  { created: false }
+end
+
+def load_booklore_sidecar(path)
+  load_json(path)
+end
+
+def save_booklore_sidecar(path, sc)
+  File.write(path, JSON.pretty_generate(sc))
+end
+
+# Synchronize sidecar JSON to reflect the same metadata we embed in the PDF.
+# Overwrites title/publishedDate/pageCount/identifiers with authoritative values.
+# Merges discovered ISBNs uniquely. Adds publicationName/publisher/issue/volume/keywords.
+def sync_sidecar_with_md(existing_sidecar, md, page_count, cover_path, isbn_list = [])
+  now_iso   = Time.now.utc.iso8601
+  cover_rel = File.basename(cover_path)
+
+  sc = existing_sidecar || {}
+  sc[:version]     ||= "1.0"
+  sc[:generatedBy]   = "periodicals-getmeta"
+  sc[:generatedAt]   = now_iso
+
+  sc[:cover] ||= {}
+  sc[:cover][:source] ||= "external"
+  sc[:cover][:path]   = cover_rel
+
+  sc[:metadata] ||= {}
+  m = sc[:metadata]
+
+  canonical_title = md[:dc_title] || "#{md[:publication_name]} #{md[:pubdate]} (Issue #{md[:issue]})"
+
+  # Authoritative fields mirrored from the embedded metadata
+  m[:title]          = canonical_title
+  m[:publishedDate]  = md[:pubdate]                if md[:pubdate]
+  m[:pageCount]      = page_count                  if page_count && page_count > 0
+
+  m[:identifiers] ||= {}
+  if md[:issn] && !md[:issn].to_s.strip.empty?
+    m[:identifiers][:issn] = md[:issn]
+  end
+
+  # Merge ISBNs found via OCR (unique array)
+  if isbn_list && !isbn_list.empty?
+    case m[:identifiers][:isbn]
+    when Array
+      m[:identifiers][:isbn] = (m[:identifiers][:isbn] + isbn_list).uniq
+    when String
+      m[:identifiers][:isbn] = ([m[:identifiers][:isbn]] + isbn_list).uniq
+    else
+      m[:identifiers][:isbn] = isbn_list.uniq
+    end
+  end
+
+  # Helpful extra fields (non-breaking for Booklore)
+  m[:publicationName] = md[:publication_name] if md[:publication_name]
+  m[:publisher]       = md[:publisher]        if md[:publisher]
+  m[:issue]           = md[:issue]            if md[:issue]
+  m[:volume]          = md[:volume]           if md[:volume]
+
+  keywords = [md[:publication_name], md[:year], md[:month], (md[:issue] && "Issue #{md[:issue]}")].compact.map(&:to_s)
+  m[:keywords] = keywords unless keywords.empty?
+
+  sc
+end
+
 # ===================== Adopt defaults after first success =====================
 def adopt_defaults_from_first_success!(base_dir, defaults, md)
   changed = false
@@ -688,7 +788,7 @@ def adopt_defaults_from_first_success!(base_dir, defaults, md)
   end
   if defaults[:issn].to_s.strip.empty? && md[:issn] && valid_issn?(md[:issn])
     defaults[:issn] = md[:issn]; changed = true
-  end  end
+  end
   if defaults[:publisher].to_s.strip.empty? && md[:publisher] && !md[:publisher].strip.empty?
     defaults[:publisher] = md[:publisher]; changed = true
   end
@@ -732,18 +832,33 @@ def main
     end
 
     parsed = parse_filename(pdf)
+
+    # Load Booklore sidecar (if exists) and allow it to influence lookups (ISSN)
+    sc_path = sidecar_path_for(pdf)
+    sidecar = load_booklore_sidecar(sc_path)
+    sidecar_issn = sidecar&.dig(:metadata, :identifiers, :issn)
+
+    # Prefer sidecar title for searching (if present), otherwise use parsed title
+    sidecar_title = sidecar&.dig(:metadata, :title)
+    search_title  = sidecar_title && !sidecar_title.strip.empty? ? sidecar_title : parsed[:title]
+
+    # Page-wise text (with caching + OCR when needed)
     pages, sha, ocr_source = extract_text_pages_with_cache(base_dir, pdf, defaults[:ocr_language])
 
     issn_hits = extract_issn_matches_per_page(pages)
     isbn_hits = extract_isbn_matches_per_page(pages)
 
+    # Build candidate list: folder default ISSN, sidecar ISSN, OCR-found ISSNs, then title search
     cands = []
     if defaults[:issn] && valid_issn?(defaults[:issn])
       cands += crossref_candidates(base_dir: base_dir, issn: defaults[:issn])
     end
+    if sidecar_issn && valid_issn?(sidecar_issn)
+      cands += crossref_candidates(base_dir: base_dir, issn: sidecar_issn)
+    end
     issn_hits.first(2).each { |h| cands += crossref_candidates(base_dir: base_dir, issn: h[:value]) }
-    cands += crossref_candidates(base_dir: base_dir, title: parsed[:title])
-    cands += wikidata_candidates(base_dir: base_dir, title: parsed[:title])
+    cands += crossref_candidates(base_dir: base_dir, title: search_title)
+    cands += wikidata_candidates(base_dir: base_dir, title: search_title)
     cands = dedup_candidates(cands)
 
     loop do
@@ -753,6 +868,7 @@ def main
         say "Aborted."
         release_lock!(base_dir)
         exit 0
+
       when 'skip'
         append_state(base_dir, {
           time: Time.now.iso8601, file: pdf, sha256: sha, status: "skipped",
@@ -760,32 +876,62 @@ def main
           ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) }
         })
         break
+
       when 'defaults'
         pick = { title: defaults[:publication_name] || parsed[:title], issn: defaults[:issn], publisher: defaults[:publisher], source: "defaults", score: 0.6 }
         md = build_metadata(pdf, parsed, pick, defaults)
         md = manual_edit(md) if md[:publication_name].to_s.strip.empty? && md[:issn].to_s.strip.empty?
         ok = write_exiftool(pdf, md)
+
+        # Booklore: ensure cover, sync sidecar with embedded metadata + ISBNs
+        page_count = pdf_page_count(pdf)
+        cover_path = cover_path_for(pdf)
+        cover_status = ensure_cover_image(pdf, cover_path)
+        isbn_list = isbn_hits.map { |h| h[:value] }.uniq
+        sidecar_existing = load_booklore_sidecar(sc_path)
+        sc = sync_sidecar_with_md(sidecar_existing, md, page_count, cover_path, isbn_list)
+        save_booklore_sidecar(sc_path, sc)
+
         append_state(base_dir, {
           time: Time.now.iso8601, file: pdf, sha256: sha, status: (ok ? "embedded" : "error"),
-          ocr_source: ocr_source, ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) }, metadata: md
+          ocr_source: ocr_source, ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) },
+          metadata: md,
+          sidecar: { path: sc_path, updated: true },
+          cover: { path: cover_path, created: cover_status[:created] }
         })
         adopt_defaults_from_first_success!(base_dir, defaults, md) if ok
         break
+
       when 'manual'
         pick = { title: parsed[:title], issn: issn_hits.first && issn_hits.first[:value], publisher: defaults[:publisher] }
         md = build_metadata(pdf, parsed, pick, defaults)
         md = manual_edit(md)
         ok = write_exiftool(pdf, md)
+
+        # Booklore sync
+        page_count = pdf_page_count(pdf)
+        cover_path = cover_path_for(pdf)
+        cover_status = ensure_cover_image(pdf, cover_path)
+        isbn_list = isbn_hits.map { |h| h[:value] }.uniq
+        sidecar_existing = load_booklore_sidecar(sc_path)
+        sc = sync_sidecar_with_md(sidecar_existing, md, page_count, cover_path, isbn_list)
+        save_booklore_sidecar(sc_path, sc)
+
         append_state(base_dir, {
           time: Time.now.iso8601, file: pdf, sha256: sha, status: (ok ? "embedded" : "error"),
-          ocr_source: ocr_source, ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) }, metadata: md
+          ocr_source: ocr_source, ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) },
+          metadata: md,
+          sidecar: { path: sc_path, updated: true },
+          cover: { path: cover_path, created: cover_status[:created] }
         })
         adopt_defaults_from_first_success!(base_dir, defaults, md) if ok
         break
+
       when 'rescan'
         cands = requery_flow(base_dir, parsed[:title])
         cands = dedup_candidates(cands)
         next
+
       when 'pick'
         pick = sel[:pick]
         md = build_metadata(pdf, parsed, pick, defaults)
@@ -794,13 +940,26 @@ def main
           md = manual_edit(md)
         end
         ok = write_exiftool(pdf, md)
+
+        # Booklore sync
+        page_count = pdf_page_count(pdf)
+        cover_path = cover_path_for(pdf)
+        cover_status = ensure_cover_image(pdf, cover_path)
+        isbn_list = isbn_hits.map { |h| h[:value] }.uniq
+        sidecar_existing = load_booklore_sidecar(sc_path)
+        sc = sync_sidecar_with_md(sidecar_existing, md, page_count, cover_path, isbn_list)
+        save_booklore_sidecar(sc_path, sc)
+
         append_state(base_dir, {
           time: Time.now.iso8601, file: pdf, sha256: sha, status: (ok ? "embedded" : "error"),
           ocr_source: ocr_source, ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) },
-          metadata: md, pick: pick
+          metadata: md, pick: pick,
+          sidecar: { path: sc_path, updated: true },
+          cover: { path: cover_path, created: cover_status[:created] }
         })
         adopt_defaults_from_first_success!(base_dir, defaults, md) if ok
         break
+
       else
         warn "Unknown choice."
       end
