@@ -3,33 +3,24 @@
 #
 # periodicals-getmeta.rb
 #
-# Formål:
-#  - Batch-annotere PDF-magasiner med indlejret XMP/PRISM-metadata.
-#  - Parse filnavn -> (title, year, month, issue).
-#  - Sideopdelt tekstudtræk + OCR (kun når nødvendigt), cache pr. PDF.
-#  - Online opslag (Crossref/Wikidata) m. cache + TTL.
-#  - Interaktiv top-5 kandidatvalg + folder defaults (ISSN, publisher, OCR-sprog).
-#  - Log (JSONL) m. resume + page/position/kontekst for ISSN/ISBN til fejlfinding.
+# - Single subfolder: .periodicals_getmeta/
+# - Interactive start menu: choose OCR language, runtime toggles (no OCR, force OCR, force lookups), TTL, view/edit defaults
+# - NEW: Clear cache (OCR for ONE file / entire folder, HTTP for entire folder)
+# - Page-wise text extraction (pdftotext) + OCR when needed (using folder default OCR language)
+# - OCR and HTTP caching stored in .periodicals_getmeta/
+# - ISSN/ISBN per page with positions and context for debugging
+# - Crossref & Wikidata lookups (with caching), top-5 candidate selection
+# - Embeds PRISM/XMP into PDF (via exiftool)
+# - JSONL log (state) with resume (file+sha), includes ocr_hits
+# - Automatically adopts folder defaults after the first successful embed (ISSN/publisher/title)
 #
-# Afhængigheder:
+# Dependencies:
 #   brew install exiftool ocrmypdf tesseract poppler
-#   (valgfrit) brew install tesseract-lang  # flere OCR-sprog
+#   (optional) brew install tesseract-lang
 #
-# Brug:
-#   ruby periodicals-getmeta.rb [/flags] "/sti/til/mappen/med/pdf"
+# Usage:
+#   ruby periodicals-getmeta.rb "/path/to/folder/with/pdfs"
 #
-# Flags (valgfri):
-#   --set-lang          Tving valg af OCR-sprog for denne mappe (overskriver defaults)
-#   --force             Ignorer HTTP/OCR-cache TTL (henter/ocr’er på ny)
-#   --ttl-days=N        Sæt HTTP-cache-levetid i dage (default 14)
-#   --no-ocr            Deaktiver OCR helt (kun pdftotext)
-#   --debug             Udskriv ekstra INFO
-#
-# Bemærk:
-#  - Angiv venligst din e-mail i USER_AGENT_EMAIL (bruges som User-Agent til Crossref/Wikidata).
-#  - OCR-sprog kan være fx "eng", "dan" eller kombi "eng+dan".
-#
-
 require 'json'
 require 'uri'
 require 'net/http'
@@ -38,12 +29,12 @@ require 'open3'
 require 'fileutils'
 require 'time'
 require 'digest'
+require 'tmpdir'
 
-# ============ Konfiguration (tilpas) ============
-USER_AGENT_EMAIL = "din-email@eksempel.dk"   # <-- SÆT DIN E-MAIL HER
+# ===================== Configuration =====================
+USER_AGENT_EMAIL = "your-email@example.com"     # <-- SET YOUR EMAIL HERE (polite API User-Agent)
 MAX_CANDIDATES   = 5
 
-# Kun ÉN undermappe pr. rodmappe
 CACHE_DIR          = ".periodicals_getmeta"
 STATE_FILENAME     = "periodicals_getmeta.state.jsonl"
 FOLDER_DEFAULTS_FN = "periodicals_getmeta.defaults.json"
@@ -52,36 +43,20 @@ LOCK_FILENAME      = "periodicals_getmeta.lock"
 DEFAULT_CACHE_TTL_DAYS = 14
 TIMEOUT_SECONDS         = 20
 
-# ============ CLI flags ============
-$options = {
-  set_lang: false,
-  force: false,
-  ttl_days: DEFAULT_CACHE_TTL_DAYS,
-  no_ocr: false,
-  debug: false
+# Runtime options (controlled from the start menu)
+$opts = {
+  force_http: false,   # re-lookup: ignore HTTP cache/TTL
+  force_ocr:  false,   # re-OCR for this run: ignore OCR cache
+  no_ocr:     false,   # run without OCR entirely
+  ttl_days:   DEFAULT_CACHE_TTL_DAYS,
+  debug:      false
 }
 
-def parse_args!
-  args = ARGV.dup
-  out = []
-  args.each do |a|
-    case a
-    when '--set-lang'   then $options[:set_lang] = true
-    when '--force'      then $options[:force] = true
-    when '--no-ocr'     then $options[:no_ocr] = true
-    when '--debug'      then $options[:debug] = true
-    when /\A--ttl-days=(\d+)\z/ then $options[:ttl_days] = $1.to_i
-    else out << a
-    end
-  end
-  ARGV.replace(out)
-end
-
-def say(s) puts(s) end
-def info(s) $stderr.puts("[INFO] #{s}") if $options[:debug] end
+def say(s="") puts(s) end
+def info(s) $stderr.puts("[INFO] #{s}") if $opts[:debug] end
 def warn(s) $stderr.puts("[WARN] #{s}") end
 
-# ============ Filsystem-hjælpere ============
+# ===================== FS helpers =====================
 def cache_dir(base_dir) File.join(base_dir, CACHE_DIR) end
 def ensure_cache_dir!(base_dir) FileUtils.mkdir_p(cache_dir(base_dir)) end
 def state_path(base_dir) File.join(cache_dir(base_dir), STATE_FILENAME) end
@@ -89,7 +64,7 @@ def defaults_path(base_dir) File.join(cache_dir(base_dir), FOLDER_DEFAULTS_FN) e
 def lock_path(base_dir) File.join(cache_dir(base_dir), LOCK_FILENAME) end
 
 def http_cache_path(base_dir, provider, key)
-  safe = key.downcase.gsub(/[^a-z0-9\-_:.]/i, '_')
+  safe = key.to_s.downcase.gsub(/[^a-z0-9\-_:.]/i, '_')
   File.join(cache_dir(base_dir), "http_#{provider}__#{safe}.json")
 end
 
@@ -98,15 +73,14 @@ def ocr_cache_path(base_dir, sha) File.join(cache_dir(base_dir), "ocr_#{sha}.jso
 def acquire_lock!(base_dir)
   lp = lock_path(base_dir)
   if File.exist?(lp)
-    warn "Lock-fil findes allerede: #{lp}. En anden proces kører måske. Slet filen hvis du vil overstyre."
+    warn "Lock file already exists: #{lp} — another run might be active. Delete the lock to override."
     exit 2
   end
   File.write(lp, "#{Process.pid}\n")
 end
 
 def release_lock!(base_dir)
-  lp = lock_path(base_dir)
-  FileUtils.rm_f(lp)
+  FileUtils.rm_f(lock_path(base_dir))
 end
 
 def sha256_file(path)
@@ -133,6 +107,14 @@ def append_state(base_dir, entry)
   File.open(state_path(base_dir), "a", encoding:"UTF-8") { |f| f.puts(entry.to_json) }
 end
 
+def load_folder_defaults(base_dir)
+  load_json(defaults_path(base_dir)) || {}
+end
+
+def save_folder_defaults(base_dir, h)
+  save_json(defaults_path(base_dir), h)
+end
+
 def already_embedded?(base_dir, file, sha)
   p = state_path(base_dir)
   return false unless File.exist?(p)
@@ -148,22 +130,14 @@ def already_embedded?(base_dir, file, sha)
   false
 end
 
-def load_folder_defaults(base_dir)
-  load_json(defaults_path(base_dir)) || {}
-end
-
-def save_folder_defaults(base_dir, hash)
-  save_json(defaults_path(base_dir), hash)
-end
-
-# ============ Kommandoafvikling ============
+# ===================== Shell utils =====================
 def run_cmd(cmd, stdin_data:nil)
   info "CMD: #{cmd}"
   stdout, stderr, status = Open3.capture3(cmd, stdin_data: stdin_data)
   [stdout, stderr, status.success?]
 end
 
-# ============ PDF utils ============
+# ===================== PDF & OCR =====================
 def pdf_page_count(pdf)
   out, _, ok = run_cmd(%(pdfinfo "#{pdf}"))
   return 0 unless ok
@@ -200,7 +174,6 @@ def need_ocr?(pages)
 end
 
 def ocrmypdf_once(pdf, ocr_langs)
-  # Byg ocrmypdf-kommando
   args = %W[ocrmypdf --skip-text]
   if ocr_langs && !ocr_langs.strip.empty?
     args += ["--language", ocr_langs]
@@ -215,21 +188,18 @@ def extract_text_pages_with_cache(base_dir, pdf, ocr_langs)
   sha = sha256_file(pdf)
   cache_file = ocr_cache_path(base_dir, sha)
 
-  if !$options[:force] && (cached = load_json(cache_file))
+  if !$opts[:force_ocr] && (cached = load_json(cache_file))
     return [cached[:pages], sha, cached[:source] || "cache"]
   end
 
-  # 1) uden OCR
   pages = extract_pages_from_pdf(pdf)
   source = "pdftotext"
 
-  # 2) hvis behov og OCR er tilladt
-  if !$options[:no_ocr] && need_ocr?(pages)
+  if !$opts[:no_ocr] && need_ocr?(pages)
     if (ocr_pdf = ocrmypdf_once(pdf, ocr_langs))
       pages = extract_pages_from_pdf(ocr_pdf)
       source = "ocrmypdf"
-      # ryd op hvis du vil:
-      # FileUtils.rm_f(ocr_pdf)
+      # FileUtils.rm_f(ocr_pdf) # keep for debugging if needed
     end
   end
 
@@ -243,7 +213,7 @@ def extract_text_pages_with_cache(base_dir, pdf, ocr_langs)
   [pages, sha, source]
 end
 
-# ============ Regex & matches ============
+# ===================== Regex & matches =====================
 def valid_issn?(issn)
   m = issn.match(/\A([0-9]{4})-([0-9X]{4})\z/i)
   return false unless m
@@ -275,9 +245,7 @@ def extract_issn_matches_per_page(pages)
   fallback = /\b([0-9]{4})-([0-9Xx]{4})\b/
   out = []
   pages.each do |pg|
-    # først eksplicit "ISSN"
     hits = find_with_positions(pg[:text], rx)
-    # så fallback hvis intet fundet
     hits = find_with_positions(pg[:text], fallback) if hits.empty?
     hits.each do |h|
       val = h[:value].gsub(/ISSN\s*[: ]?/i, '').upcase
@@ -310,34 +278,19 @@ def extract_isbn_matches_per_page(pages)
   out.uniq { |x| [x[:page], x[:value], x[:start]] }
 end
 
-# ============ Filnavn parsing ============
+# ===================== Filename parsing =====================
 def parse_filename(fn)
   base = File.basename(fn, ".pdf")
-  # Mønster: Title - YYYY-MM - ISSUE
   if base =~ /^(?<title>.+?)\s*[-–]\s*(?<year>\d{4})-. \s*[-–]\s*(?<issue>\d{1,5})$/i
-    return {
-      title: $~[:title].strip,
-      year: $~[:year].to_i,
-      month: $~[:month],
-      issue: $~[:issue],
-      source: "filename"
-    }
+    return { title:$~[:title].strip, year:$~[:year].to_i, month:$~[:month], issue:$~[:issue], source:"filename" }
   end
-  # Tolerant variant: Title YYYY-MM ... ISSUE
-  if base =~ /^(?<title>.+?)\s+(?<year>\d{4})[-..*?(?<issue>\d{1,5})$/i
-    return {
-      title: $~[:title].strip,
-      year: $~[:year].to_i,
-      month: $~[:month],
-      issue: $~[:issue],
-      source: "filename(fuzzy)"
-    }
+  if base =~ /^(?<title>.+?)\s+(?<year>\d{4})-. .*?(?<issue>\d{1,5})$/i
+    return { title:$~[:title].strip, year:$~[:year].to_i, month:$~[:month], issue:$~[:issue], source:"filename(fuzzy)" }
   end
-  # Minimal
   { title: base.strip, source: "filename(min)" }
 end
 
-# ============ HTTP utils + cache ============
+# ===================== HTTP & cache =====================
 def http_get_json(url, headers: {})
   uri = URI(url)
   http = Net::HTTP.new(uri.host, uri.port)
@@ -353,9 +306,8 @@ end
 
 def cached_http_get_json(base_dir, provider, key, url, headers: {})
   path = http_cache_path(base_dir, provider, key)
-  # respectér TTL, med mindre --force
-  if File.exist?(path) && !$options[:force]
-    ttl_days = $options[:ttl_days] || DEFAULT_CACHE_TTL_DAYS
+  if File.exist?(path) && !$opts[:force_http]
+    ttl_days = $opts[:ttl_days] || DEFAULT_CACHE_TTL_DAYS
     if (Time.now - File.mtime(path)) / (24*3600.0) <= ttl_days
       return JSON.parse(File.read(path)) rescue nil
     end
@@ -364,8 +316,7 @@ def cached_http_get_json(base_dir, provider, key, url, headers: {})
   File.write(path, JSON.pretty_generate(data))
   data
 rescue => e
-  warn "HTTP GET/cache-fejl (#{provider}/#{key}): #{e}"
-  # Returnér evt. stale cache hvis findes
+  warn "HTTP GET/cache error (#{provider}/#{key}): #{e}"
   if File.exist?(path)
     JSON.parse(File.read(path)) rescue nil
   else
@@ -373,34 +324,22 @@ rescue => e
   end
 end
 
-# ============ Opslagskilder ============
+# ===================== Lookup providers =====================
 def crossref_candidates(base_dir:, title: nil, issn: nil)
   out = []
   if issn
     url = "https://api.crossref.org/journals/#{URI.encode_www_form_component(issn)}"
     data = cached_http_get_json(base_dir, "crossref_journal", issn, url)
     if (msg = data && data['message'])
-      out << {
-        source: "Crossref(journal)",
-        title: msg['title'],
-        issn: (Array(msg['ISSN']).first || issn),
-        publisher: msg['publisher'],
-        score: 1.0
-      }
+      out << { source:"Crossref(journal)", title:msg['title'], issn:(Array(msg['ISSN']).first || issn), publisher:msg['publisher'], score:1.0 }
     end
   end
   if title && out.empty?
     url = "https://api.crossref.org/journals?query=#{URI.encode_www_form_component(title)}"
     data = cached_http_get_json(base_dir, "crossref_search", title, url)
-    items = data && data.dig('message', 'items') || []
+    items = data && data.dig('message','items') || []
     items.first(MAX_CANDIDATES).each_with_index do |it, idx|
-      out << {
-        source: "Crossref(search)",
-        title: it['title'],
-        issn: Array(it['ISSN']).first,
-        publisher: it['publisher'],
-        score: 0.8 - idx * 0.05
-      }
+      out << { source:"Crossref(search)", title:it['title'], issn:Array(it['ISSN']).first, publisher:it['publisher'], score:0.8 - idx*0.05 }
     end
   end
   out
@@ -424,13 +363,7 @@ def wikidata_candidates(base_dir:, title:)
       lab = pjson && (pjson.dig('entities', pq, 'labels', 'en', 'value') || pjson.dig('entities', pq, 'labels', 'da', 'value'))
       pubname ||= lab
     end
-    out << {
-      source: "Wikidata",
-      title: (entity.dig('labels','en','value') || entity.dig('labels','da','value') || hit['label'] || title),
-      issn: issn_vals&.first,
-      publisher: pubname,
-      score: 0.7
-    }
+    out << { source:"Wikidata", title:(entity.dig('labels','en','value') || entity.dig('labels','da','value') || hit['label'] || title), issn:issn_vals&.first, publisher:pubname, score:0.7 }
   end
   out
 end
@@ -447,79 +380,7 @@ def dedup_candidates(cands)
   out.sort_by { |c| [-c[:score].to_f, (c[:issn] ? 0 : 1)] }.first(MAX_CANDIDATES)
 end
 
-# ============ OCR-sprog (Tesseract) ============
-def tesseract_installed_languages
-  out, err, ok = run_cmd("tesseract --list-langs")
-  return [] unless ok
-  lines = out.split(/\r?\n/).map(&:strip)
-  # første linje kan være "List of available languages (4):"
-  langs = lines.select { |l| l =~ /\A[a-z]{3}(\+[a-z]{3})*\z/i || l =~ /\A[a-z_]+\z/i }
-  # tesseract kan også vise aliaser, vi tager alt der ikke ligner header
-  if langs.empty?
-    langs = lines.reject { |l| l.empty? || l =~ /list of/i }
-  end
-  langs.uniq
-end
-
-def choose_ocr_language_interactively!(base_dir, defaults)
-  installed = tesseract_installed_languages
-  if installed.empty?
-    warn "Ingen Tesseract-sprog fundet. Installer fx: brew install tesseract-lang dan"
-    print "Vil du køre videre UDEN OCR? (y/N): "
-    ans = STDIN.gets&.strip&.downcase
-    if ans == 'y'
-      defaults[:ocr_language] = nil
-      save_folder_defaults(base_dir, defaults)
-      return
-    else
-      warn "Afbryder. Installer Tesseract sprogpakker og kør igen."
-      exit 3
-    end
-  end
-
-  say "\nInstallerede OCR-sprog (tesseract):"
-  installed.each_with_index do |l, i|
-    say "  [#{i+1}] #{l}"
-  end
-  say "\nVælg sprog-koder (fx 'eng' eller 'eng+dan')."
-  say "Du kan også indtaste numre separeret med '+', fx '1+2'."
-  print "Vælg: "
-  inp = STDIN.gets&.strip
-
-  chosen = nil
-  if inp && inp =~ /\A(\d+(\+\d+)*)\z/
-    parts = inp.split('+').map { |x| x.to_i }
-    codes = parts.map { |idx| installed[idx-1] }.compact
-    chosen = codes.join('+') unless codes.empty?
-  else
-    chosen = inp
-  end
-
-  chosen = chosen.to_s.strip
-  if chosen.empty?
-    warn "Intet valgt. Bevarer eksisterende: #{defaults[:ocr_language] || '(ingen)'}"
-    return
-  end
-
-  # simpel validering: split på '+', check at alle findes i installed
-  codes = chosen.split('+')
-  invalid = codes.any? { |c| !installed.include?(c) }
-  if invalid
-    warn "Nogle koder ikke fundet i installerede sprog. Valgt: #{chosen}, installeret: #{installed.join(', ')}"
-    print "Fortsæt alligevel med '#{chosen}'? (y/N): "
-    ans = STDIN.gets&.strip&.downcase
-    unless ans == 'y'
-      warn "Afbryder valg. Prøv igen med --set-lang."
-      exit 4
-    end
-  end
-
-  defaults[:ocr_language] = chosen
-  save_folder_defaults(base_dir, defaults)
-  say "OCR-sprog sat til: #{chosen}"
-end
-
-# ============ Metadata-skrivning ============
+# ===================== ExifTool (write metadata) =====================
 def write_exiftool(pdf, md)
   args = []
   title = md[:dc_title] || "#{md[:publication_name]} #{md[:pubdate]} (Issue #{md[:issue]})".strip
@@ -533,35 +394,33 @@ def write_exiftool(pdf, md)
   args << %Q{"-XMP-pdf:Keywords=#{keywords}"} unless keywords.empty?
   args << "-overwrite_original"
   cmd = %(exiftool #{args.join(' ')} "#{pdf}")
-  stdout, stderr, ok = run_cmd(cmd)
-  unless ok
-    warn "ExifTool fejl: #{stderr}"
-  end
+  _, stderr, ok = run_cmd(cmd)
+  warn "ExifTool error: #{stderr}" unless ok
   ok
 end
 
-# ============ Interaktivt valg ============
+# ===================== Interaction =====================
 def prompt_select(file, parsed, cands, folder_defaults)
   say "\n—"
-  say "Fil: #{File.basename(file)}"
-  say "Fundet fra navn: title='#{parsed[:title]}' year='#{parsed[:year]}' month='#{parsed[:month]}' issue='#{parsed[:issue]}'"
-  say "Folder defaults: #{folder_defaults.transform_values { |v| v.to_s[0,60] }}"
+  say "File: #{File.basename(file)}"
+  say "From filename: title='#{parsed[:title]}' year='#{parsed[:year]}' month='#{parsed[:month]}' issue='#{parsed[:issue]}'"
+  say "Folder defaults → title: #{folder_defaults[:publication_name] || '-'} | ISSN: #{folder_defaults[:issn] || '-'} | publisher: #{folder_defaults[:publisher] || '-'} | OCR language: #{folder_defaults[:ocr_language] || '(none)'}"
 
   if cands.empty?
-    say "Ingen kandidater fundet. [M]anuel / [S]kip / [A]bort?"
+    say "No candidates found. [M]anual / [S]kip / [A]bort?"
     print "> "
-    inp = STDIN.gets&amp;.strip&amp;.upcase
+    inp = STDIN.gets&.strip&.upcase
     return { action: 'abort' } if inp == 'A'
     return { action: 'skip' }  if inp == 'S'
     return { action: 'manual' }
   end
 
-  say "Kandidater:"
+  say "Candidates:"
   cands.each_with_index do |c, i|
     say "[#{i+1}] #{c[:title]}  | ISSN: #{c[:issn] || '-'}  | Publisher: #{c[:publisher] || '-'}  (#{c[:source]})"
   end
-  say "[D] Brug folder defaults    [M] Manuel    [S] Skip    [A] Abort    [R] Re-søg med anden titel"
-  print "Vælg (1-#{cands.length}/D/M/S/A/R): "
+  say "[D] Use folder defaults    [M] Manual    [S] Skip    [A] Abort    [R] Re-search with another title"
+  print "Choose (1-#{cands.length}/D/M/S/A/R): "
   inp = STDIN.gets&.strip
   return { action: 'abort' } if inp&.upcase == 'A'
   return { action: 'skip' }  if inp&.upcase == 'S'
@@ -570,21 +429,19 @@ def prompt_select(file, parsed, cands, folder_defaults)
   return { action: 'rescan' } if inp&.upcase == 'R'
   idx = inp.to_i
   if idx >= 1 && idx <= cands.length
-    return { action: 'pick', pick: cands[idx-1] }
+    { action: 'pick', pick: cands[idx-1] }
   else
     { action: 'manual' }
   end
 end
 
-def build_metadata(file, parsed, pick, folder_defaults)
-  pubname = pick[:title] || folder_defaults[:publication_name] || parsed[:title]
-  issn = pick[:issn] || folder_defaults[:issn]
-  publisher = pick[:publisher] || folder_defaults[:publisher]
-
-  year  = parsed[:year]
-  month = parsed[:month] || "01"
-  pubdate = [year, month].compact.join("-")
-
+def build_metadata(file, parsed, pick, defaults)
+  pubname  = pick[:title] || defaults[:publication_name] || parsed[:title]
+  issn     = pick[:issn] || defaults[:issn]
+  publisher= pick[:publisher] || defaults[:publisher]
+  year     = parsed[:year]
+  month    = parsed[:month] || "01"
+  pubdate  = [year, month].compact.join("-")
   {
     publication_name: pubname,
     issn: issn,
@@ -599,7 +456,7 @@ def build_metadata(file, parsed, pick, folder_defaults)
 end
 
 def manual_edit(md)
-  say "Manuel redigering (tryk Enter for at beholde nuværende værdi)"
+  say "Manual edit (press Enter to keep current value):"
   print "publication_name [#{md[:publication_name]}]: "; t = STDIN.gets&.strip; md[:publication_name] = t unless t.nil? || t.empty?
   print "issn [#{md[:issn]}]: "; t = STDIN.gets&.strip; md[:issn] = t unless t.nil? || t.empty?
   print "publisher [#{md[:publisher]}]: "; t = STDIN.gets&.strip; md[:publisher] = t unless t.nil? || t.empty?
@@ -613,7 +470,7 @@ def manual_edit(md)
 end
 
 def requery_flow(base_dir, title)
-  say "Ny søgetitel (Enter for '#{title}'): "
+  say "New search title (Enter to keep '#{title}'): "
   print "> "
   t = STDIN.gets&.strip
   t = title if t.nil? || t.empty?
@@ -622,150 +479,346 @@ def requery_flow(base_dir, title)
   dedup_candidates(c1 + c2)
 end
 
-# ============ Hovedprogram ============
+# ===================== Tesseract languages =====================
+def tesseract_installed_languages
+  out, _, ok = run_cmd("tesseract --list-langs")
+  return [] unless ok
+  lines = out.split(/\r?\n/).map(&:strip)
+  lines.reject { |l| l.empty? || l =~ /list of/i }
+end
+
+def choose_ocr_language!(base_dir, defaults)
+  installed = tesseract_installed_languages
+  if installed.empty?
+    warn "No Tesseract languages found (tesseract --list-langs). Install e.g.: brew install tesseract-lang dan"
+    return
+  end
+  say "\nInstalled OCR languages:"
+  installed.each_with_index { |l,i| say "  [#{i+1}] #{l}" }
+  say "Enter code (e.g., 'eng' or combo 'eng+dan'), or use numbers with '+', e.g., '1+2':"
+  print "> "
+  inp = STDIN.gets&.strip
+  return if inp.nil? || inp.empty?
+
+  chosen = nil
+  if inp =~ /\A(\d+(\+\d+)*)\z/
+    parts = inp.split('+').map(&:to_i)
+    codes = parts.map { |idx| installed[idx-1] }.compact
+    chosen = codes.join('+') unless codes.empty?
+  else
+    chosen = inp
+  end
+
+  if chosen && !chosen.empty?
+    defaults[:ocr_language] = chosen
+    save_folder_defaults(base_dir, defaults)
+    say "OCR language set to: #{chosen}"
+  end
+end
+
+# ===================== Cache clearing =====================
+def pick_pdf_interactively(pdfs)
+  say "\nSelect file to clear OCR cache:"
+  pdfs.each_with_index do |f, i|
+    say "  [#{i+1}] #{File.basename(f)}"
+  end
+  say "Enter a number (1-#{pdfs.size}) or press ENTER to cancel."
+  print "> "
+  inp = STDIN.gets&.strip
+  return nil if inp.nil? || inp.empty?
+  idx = inp.to_i
+  return nil unless idx.between?(1, pdfs.size)
+  pdfs[idx - 1]
+end
+
+def clear_ocr_cache_for_file(base_dir, file)
+  sha = sha256_file(file)
+  path = ocr_cache_path(base_dir, sha)
+  if File.exist?(path)
+    FileUtils.rm_f(path)
+    say "Deleted OCR cache for file: #{File.basename(file)}"
+  else
+    say "No OCR cache found for file: #{File.basename(file)}"
+  end
+end
+
+def clear_ocr_cache_all(base_dir)
+  pattern = File.join(cache_dir(base_dir), "ocr_*.json")
+  files = Dir.glob(pattern)
+  files.each { |f| FileUtils.rm_f(f) }
+  say "Deleted #{files.size} OCR cache file(s)."
+end
+
+def clear_http_cache_all(base_dir)
+  pattern = File.join(cache_dir(base_dir), "http_*.json")
+  files = Dir.glob(pattern)
+  files.each { |f| FileUtils.rm_f(f) }
+  say "Deleted #{files.size} HTTP cache file(s)."
+end
+
+# ===================== Start menu =====================
+def show_start_menu!(base_dir, defaults, pdfs)
+  loop do
+    say "\n========== PERIODICALS-GETMETA =========="
+    say "Folder: #{base_dir}"
+    say "PDFs found: #{pdfs.length}"
+    say "Folder defaults:"
+    say "  publication_name: #{defaults[:publication_name] || '-'}"
+    say "  issn            : #{defaults[:issn] || '-'}"
+    say "  publisher       : #{defaults[:publisher] || '-'}"
+    say "  ocr_language    : #{defaults[:ocr_language] || '(none)'}"
+    say "Runtime options:"
+    say "  [2] Run WITHOUT OCR   : #{$opts[:no_ocr] ? 'ON' : 'OFF'}"
+    say "  [3] Force OCR (re-OCR): #{$opts[:force_ocr] ? 'ON' : 'OFF'}"
+    say "  [4] Force lookups     : #{$opts[:force_http] ? 'ON' : 'OFF'} (ignore HTTP cache/TTL)"
+    say "  HTTP cache TTL        : #{$opts[:ttl_days]} days"
+    say "-----------------------------------------"
+    say " [1] Choose OCR language"
+    say " [2] Toggle: run WITHOUT OCR (ON/OFF)"
+    say " [3] Toggle: FORCE OCR for this run (ON/OFF)"
+    say " [4] Toggle: FORCE lookups (ignore HTTP cache/TTL) (ON/OFF)"
+    say " [5] Set TTL (days) for HTTP cache"
+    say " [6] View/edit folder defaults (title/ISSN/publisher/ocr_language)"
+    say " [7] Quick OCR test on first PDF"
+    say " [8] Clear OCR cache for ONE file"
+    say " [9] Clear OCR cache for ENTIRE folder"
+    say " [10] Clear HTTP cache for ENTIRE folder"
+    say " [ENTER] Start processing"
+    say " [Q] Quit without running"
+    print "> "
+
+    inp = STDIN.gets&.strip
+    return if inp.nil? || inp.empty?
+
+    case inp.upcase
+    when 'Q'
+      say "Quitting."
+      exit 0
+    when '1'
+      choose_ocr_language!(base_dir, defaults)
+    when '2'
+      $opts[:no_ocr] = !$opts[:no_ocr]
+      say "Run WITHOUT OCR: #{$opts[:no_ocr] ? 'ON' : 'OFF'}"
+    when '3'
+      $opts[:force_ocr] = !$opts[:force_ocr]
+      say "Force OCR: #{$opts[:force_ocr] ? 'ON' : 'OFF'}"
+    when '4'
+      $opts[:force_http] = !$opts[:force_http]
+      say "Force lookups: #{$opts[:force_http] ? 'ON' : 'OFF'}"
+    when '5'
+      print "New TTL in days (current #{$opts[:ttl_days]}): "
+      t = STDIN.gets&.strip
+      if t && t =~ /^\d+$/
+        $opts[:ttl_days] = t.to_i
+        say "TTL set to #{$opts[:ttl_days]} days."
+      else
+        warn "Invalid number."
+      end
+    when '6'
+      say "Edit defaults (Enter keeps current):"
+      print "publication_name [#{defaults[:publication_name]}]: "; t = STDIN.gets&.strip; defaults[:publication_name] = t unless t.nil? || t.empty?
+      print "issn [#{defaults[:issn]}]: "; t = STDIN.gets&.strip; defaults[:issn] = t unless t.nil? || t.empty?
+      print "publisher [#{defaults[:publisher]}]: "; t = STDIN.gets&.strip; defaults[:publisher] = t unless t.nil? || t.empty?
+      print "ocr_language [#{defaults[:ocr_language]}]: "; t = STDIN.gets&.strip; defaults[:ocr_language] = t unless t.nil? || t.empty?
+      save_folder_defaults(base_dir, defaults)
+      say "Defaults saved."
+    when '7'
+      if pdfs.empty?
+        warn "No PDFs to test."
+      else
+        test_pdf = pdfs.first
+        say "Testing OCR on: #{File.basename(test_pdf)}"
+        pages = extract_pages_from_pdf(test_pdf)
+        need = need_ocr?(pages)
+        say "pdftotext produced #{pages.count { |p| p[:text].strip.length >= 20 }} non-empty pages (#{pages.size} total)."
+        if $opts[:no_ocr]
+          say "OCR is disabled (no OCR will be attempted)."
+        else
+          say "OCR recommended? #{need ? 'Yes' : 'No'}"
+          if need
+            lang = defaults[:ocr_language]
+            say "Attempting OCR (language: #{lang || '(none)'}), test only…"
+            if (ocr_pdf = ocrmypdf_once(test_pdf, lang))
+              pages2 = extract_pages_from_pdf(ocr_pdf)
+              say "After OCR: #{pages2.count { |p| p[:text].strip.length >= 20 }} non-empty pages."
+            else
+              warn "OCR did not complete."
+            end
+          end
+        end
+      end
+    when '8'
+      if pdfs.empty?
+        warn "No PDFs in folder."
+      else
+        file = pick_pdf_interactively(pdfs)
+        if file
+          clear_ocr_cache_for_file(base_dir, file)
+        else
+          say "No file selected."
+        end
+      end
+    when '9'
+      print "Confirm deleting OCR cache for ENTIRE folder (type 'YES'): "
+      conf = STDIN.gets&.strip
+      if conf == 'YES'
+        clear_ocr_cache_all(base_dir)
+      else
+        say "Cancelled."
+      end
+    when '10'
+      print "Confirm deleting HTTP cache for ENTIRE folder (type 'YES'): "
+      conf = STDIN.gets&.strip
+      if conf == 'YES'
+        clear_http_cache_all(base_dir)
+      else
+        say "Cancelled."
+      end
+    else
+      warn "Unknown choice."
+    end
+  end
+end
+
+# ===================== Adopt defaults after first success =====================
+def adopt_defaults_from_first_success!(base_dir, defaults, md)
+  changed = false
+  if defaults[:publication_name].to_s.strip.empty? && md[:publication_name] && !md[:publication_name].strip.empty?
+    defaults[:publication_name] = md[:publication_name]; changed = true
+  end
+  if defaults[:issn].to_s.strip.empty? && md[:issn] && valid_issn?(md[:issn])
+    defaults[:issn] = md[:issn]; changed = true
+  end  end
+  if defaults[:publisher].to_s.strip.empty? && md[:publisher] && !md[:publisher].strip.empty?
+    defaults[:publisher] = md[:publisher]; changed = true
+  end
+  if changed
+    save_folder_defaults(base_dir, defaults)
+    say ">>> Folder defaults have been established from the first successful match:"
+    say "    title='#{defaults[:publication_name]}', ISSN='#{defaults[:issn]}', publisher='#{defaults[:publisher]}'"
+  end
+end
+
+# ===================== Main =====================
 def main
-  parse_args!
-  dir = ARGV[0]
-  unless dir && Dir.exist?(dir)
-    warn "Brug: ruby periodicals-getmeta.rb [/flags] /sti/til/mappen/med/pdf"
+  base_dir = ARGV[0]
+  unless base_dir && Dir.exist?(base_dir)
+    warn "Usage: ruby periodicals-getmeta.rb \"/path/to/folder/with/pdfs\""
     exit 1
   end
 
-  ensure_cache_dir!(dir)
-  acquire_lock!(dir)
-  defaults = load_folder_defaults(dir) || {}
+  ensure_cache_dir!(base_dir)
+  acquire_lock!(base_dir)
 
-  # OCR-sprog: kræv/tilbyd valg hvis ikke sat eller hvis --set-lang
-  if $options[:set_lang] || !defaults.key?(:ocr_language)
-    choose_ocr_language_interactively!(dir, defaults)
-  else
-    say "OCR-sprog (folder default): #{defaults[:ocr_language] || '(ingen)'}"
-  end
+  defaults = load_folder_defaults(base_dir)
+  defaults[:ocr_language] ||= nil
 
-  pdfs = Dir.glob(File.join(dir, "*.pdf")).sort
+  pdfs = Dir.glob(File.join(base_dir, "*.pdf")).sort
+
+  # Interactive start menu
+  show_start_menu!(base_dir, defaults, pdfs)
+
   if pdfs.empty?
-    warn "Ingen PDF-filer fundet i: #{dir}"
-    release_lock!(dir)
+    warn "No PDFs found in: #{base_dir}"
+    release_lock!(base_dir)
     exit 0
   end
 
   pdfs.each do |pdf|
     sha = sha256_file(pdf)
-    if already_embedded?(dir, pdf, sha)
-      info "Springer over (allerede embedded): #{File.basename(pdf)}"
+    if already_embedded?(base_dir, pdf, sha)
+      info "Skipping (already embedded): #{File.basename(pdf)}"
       next
     end
 
     parsed = parse_filename(pdf)
-
-    # Sideopdelt tekst (med cache og valgt OCR-sprog)
-    pages, sha, ocr_source = extract_text_pages_with_cache(dir, pdf, defaults[:ocr_language])
+    pages, sha, ocr_source = extract_text_pages_with_cache(base_dir, pdf, defaults[:ocr_language])
 
     issn_hits = extract_issn_matches_per_page(pages)
     isbn_hits = extract_isbn_matches_per_page(pages)
 
     cands = []
     if defaults[:issn] && valid_issn?(defaults[:issn])
-      cands += crossref_candidates(base_dir: dir, issn: defaults[:issn])
+      cands += crossref_candidates(base_dir: base_dir, issn: defaults[:issn])
     end
-    issn_hits.first(2).each { |h| cands += crossref_candidates(base_dir: dir, issn: h[:value]) }
-    cands += crossref_candidates(base_dir: dir, title: parsed[:title])
-    cands += wikidata_candidates(base_dir: dir, title: parsed[:title])
+    issn_hits.first(2).each { |h| cands += crossref_candidates(base_dir: base_dir, issn: h[:value]) }
+    cands += crossref_candidates(base_dir: base_dir, title: parsed[:title])
+    cands += wikidata_candidates(base_dir: base_dir, title: parsed[:title])
     cands = dedup_candidates(cands)
 
     loop do
       sel = prompt_select(pdf, parsed, cands, defaults)
       case sel[:action]
       when 'abort'
-        info "Afbrudt af bruger."
-        release_lock!(dir)
+        say "Aborted."
+        release_lock!(base_dir)
         exit 0
       when 'skip'
-        append_state(dir, {
+        append_state(base_dir, {
           time: Time.now.iso8601, file: pdf, sha256: sha, status: "skipped",
           ocr_source: ocr_source,
           ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) }
         })
         break
       when 'defaults'
-        pick = {
-          title: defaults[:publication_name] || parsed[:title],
-          issn: defaults[:issn],
-          publisher: defaults[:publisher],
-          source: "defaults",
-          score: 0.6
-        }
+        pick = { title: defaults[:publication_name] || parsed[:title], issn: defaults[:issn], publisher: defaults[:publisher], source: "defaults", score: 0.6 }
         md = build_metadata(pdf, parsed, pick, defaults)
         md = manual_edit(md) if md[:publication_name].to_s.strip.empty? && md[:issn].to_s.strip.empty?
         ok = write_exiftool(pdf, md)
-        append_state(dir, {
-          time: Time.now.iso8601, file: pdf, sha256: sha,
-          status: (ok ? "embedded" : "error"),
-          ocr_source: ocr_source,
-          ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) },
-          metadata: md
+        append_state(base_dir, {
+          time: Time.now.iso8601, file: pdf, sha256: sha, status: (ok ? "embedded" : "error"),
+          ocr_source: ocr_source, ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) }, metadata: md
         })
-        if ok
-          defaults[:publication_name] ||= md[:publication_name]
-          defaults[:issn] ||= md[:issn] if md[:issn] && valid_issn?(md[:issn])
-          defaults[:publisher] ||= md[:publisher]
-          save_folder_defaults(dir, defaults)
-        end
+        adopt_defaults_from_first_success!(base_dir, defaults, md) if ok
         break
       when 'manual'
         pick = { title: parsed[:title], issn: issn_hits.first && issn_hits.first[:value], publisher: defaults[:publisher] }
         md = build_metadata(pdf, parsed, pick, defaults)
         md = manual_edit(md)
         ok = write_exiftool(pdf, md)
-        append_state(dir, {
-          time: Time.now.iso8601, file: pdf, sha256: sha,
-          status: (ok ? "embedded" : "error"),
-          ocr_source: ocr_source,
-          ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) },
-          metadata: md
+        append_state(base_dir, {
+          time: Time.now.iso8601, file: pdf, sha256: sha, status: (ok ? "embedded" : "error"),
+          ocr_source: ocr_source, ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) }, metadata: md
         })
-        if ok
-          defaults[:publication_name] ||= md[:publication_name]
-          defaults[:issn] ||= md[:issn] if md[:issn] && valid_issn?(md[:issn])
-          defaults[:publisher] ||= md[:publisher]
-          save_folder_defaults(dir, defaults)
-        end
+        adopt_defaults_from_first_success!(base_dir, defaults, md) if ok
         break
       when 'rescan'
-        cands = requery_flow(dir, parsed[:title])
+        cands = requery_flow(base_dir, parsed[:title])
         cands = dedup_candidates(cands)
         next
       when 'pick'
         pick = sel[:pick]
         md = build_metadata(pdf, parsed, pick, defaults)
         if md[:publication_name].to_s.strip.empty? || md[:issn].to_s.strip.empty?
-          say "Nogle felter er tomme → manuel finpudsning:"
+          say "Some fields are empty → manual fine-tuning:"
           md = manual_edit(md)
         end
         ok = write_exiftool(pdf, md)
-        append_state(dir, {
-          time: Time.now.iso8601, file: pdf, sha256: sha,
-          status: (ok ? "embedded" : "error"),
-          ocr_source: ocr_source,
-          ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) },
+        append_state(base_dir, {
+          time: Time.now.iso8601, file: pdf, sha256: sha, status: (ok ? "embedded" : "error"),
+          ocr_source: ocr_source, ocr_hits: { issn: issn_hits.first(5), isbn: isbn_hits.first(5) },
           metadata: md, pick: pick
         })
-        if ok
-          defaults[:publication_name] ||= md[:publication_name]
-          defaults[:issn] ||= md[:issn] if md[:issn] && valid_issn?(md[:issn])
-          defaults[:publisher] ||= md[:publisher]
-          save_folder_defaults(dir, defaults)
-        end
+        adopt_defaults_from_first_success!(base_dir, defaults, md) if ok
         break
       else
-        warn "Ukendt valg."
+        warn "Unknown choice."
       end
     end
   end
 
-  say "\nFærdig. Log: #{state_path(dir)}. Defaults: #{defaults_path(dir)}. Cachemappe: #{cache_dir(dir)}"
-  release_lock!(dir)
+  say "\nDone. Log: #{state_path(base_dir)}"
+  say "Defaults: #{defaults_path(base_dir)}"
+  say "Cache folder: #{cache_dir(base_dir)}"
+  release_lock!(base_dir)
 end
 
-# Start
-main if __FILE__ == $0
+# Run
+if __FILE__ == $0
+  base_dir = ARGV[0]
+  if !base_dir
+    warn "Usage: ruby periodicals-getmeta.rb \"/path/to/folder/with/pdfs\""
+    exit 1
+  end
+  main
+end
