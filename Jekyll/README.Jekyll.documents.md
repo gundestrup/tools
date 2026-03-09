@@ -30,5 +30,90 @@ collections:
     output: true
     permalink: /documents/:category/:slug/
 ```
+## automatic category pages
+```yaml
+defaults:
+  - scope:
+      type: documents
+    values:
+      layout: document
+```
 ## plugin file
 place here _plugins/document_generator.rb
+## layout file
+_layouts/document.html
+```liquid
+---
+layout: default
+---
+
+<h1>{{ page.title }}</h1>
+
+<p>
+  <strong>Dato:</strong> {{ page.date | date: "%d-%m-%Y" }}<br>
+  <strong>Kategori:</strong> {{ page.category }}<br>
+</p>
+
+<p>
+  {{ page.file_url }}
+    Download original fil ({{ page.extension | upcase | remove: "." }})
+  </a>
+</p>
+```
+## All documents
+documents/index.md
+```liquid
+---
+layout: default
+title: Alle dokumenter
+---
+
+<h1>Alle dokumenter</h1>
+
+{% assign docs = site.documents | sort: "date" | reverse %}
+
+<ul>
+{% for doc in docs %}
+  <li>
+    {{ doc.url }}{{ doc.title }}</a>
+    <small>({{ doc.date | date: "%d-%m-%Y" }}, {{ doc.category }})</small>
+  </li>
+{% endfor %}
+</ul>
+```
+## All categories
+documents/categories.md
+```liquid
+---
+layout: default
+title: Dokument-kategorier
+---
+
+<h1>Kategorier</h1>
+
+{% assign cats = site.documents | map: "category" | uniq | sort %}
+
+<ul>
+{% for cat in cats %}
+  <li>
+    /documents/{{ cat }}/{{ cat }}</a>
+  </li>
+{% endfor %}
+</ul>
+``
+```
+## Latest documents
+_includes/latest_documents.html
+```yaml
+{% assign docs = site.documents | sort: "date" | reverse | slice: 0, include.count %}
+
+<ul>
+{% for doc in docs %}
+  <li>
+    <{ doc.url }}{{ doc.title }}</a>
+    <small>{{ doc.date | date: "%d-%m-%Y" }}</small>
+  </li>
+{% endfor %}
+</ul>
+```
+Usage ``{% include latest_documents.html count=5 %}```
