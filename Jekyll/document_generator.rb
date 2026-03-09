@@ -13,7 +13,7 @@ module Jekyll
         ext      = File.extname(filepath)
         next if ext.nil? || ext.empty?
 
-        # Eksempel på filnavn:
+        # Example of filename:
         # 2026-03-01_Generalforsamling_Referat.pdf
         filename  = File.basename(filepath)
         basename  = File.basename(filepath, ext)
@@ -22,18 +22,18 @@ module Jekyll
           year, month, day, raw_title = $1, $2, $3, $4
           date = Date.parse("#{year}-#{month}-#{day}")
         else
-          # fallback, hvis navnet ikke følger standarden
+          # fallback, if names does not fit standard
           raw_title = basename
           date = File.mtime(filepath)
         end
 
-        # Læs kategori fra mappestrukturen
+        # Read Category from folder structure
         category = File.dirname(rel_path).split("/")[-1]
 
-        # Pæn titel: erstatter "_" med " "
+        # Title Cleanup: replaces "_" with " "
         title = raw_title.gsub("_", " ")
 
-        # Destinationen for den genererede Jekyll-side
+        # Destination for generated Jekyll-side
         doc_file = "_documents/#{category}-#{basename}.md"
 
         document = Jekyll::Document.new(
@@ -42,17 +42,17 @@ module Jekyll
           collection: site.collections["documents"]
         )
 
-        # Metadata til dokumentet
+        # Metadata for document
         document.data["title"]     = title
         document.data["date"]      = date
         document.data["category"]  = category.downcase
         document.data["file_url"]  = "/" + rel_path
         document.data["extension"] = ext.downcase
 
-        # Indhold (valgfrit)
+        # Content (optional)
         document.content = "Dette dokument er automatisk oprettet ud fra filen."
 
-        # Tilføj dokumentet til Jekyll
+        # Add document to Jekyll
         site.collections["documents"].docs << document
       end
     end
