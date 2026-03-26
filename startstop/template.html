@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<title>STOPP/START – Beslutningsstøtte</title>
+<style>
+  body { font-family: Arial; margin: 20px; }
+  .obs { background: #ffdede; border-left: 5px solid red; padding: 10px; margin: 10px 0; }
+  .start { background: #deffde; border-left: 5px solid green; padding: 10px; margin: 10px 0; }
+  #viewB, #viewC { display:none; }
+</style>
+</head>
+<body>
+
+<h1>STOPP/START – Beslutningsstøtteværktøj</h1>
+
+<button onclick="showB()">Vis Version B</button>
+<button onclick="showC()">Vis Version C</button>
+
+<script id="stoppstart-data" type="application/json">
+__JSON_PLACEHOLDER__
+</script>
+
+<div id="viewB">
+  <h2>Version B</h2>
+  <input id="searchB" placeholder="Søg efter præparat">
+  <div id="resultsB"></div>
+</div>
+
+<div id="viewC">
+  <h2>Version C</h2>
+  <input id="drugInput" placeholder="Tilføj præparat og tryk Enter">
+  <div id="drugList"></div>
+  <div id="resultsC"></div>
+</div>
+
+<script>
+function showB(){ viewB.style.display="block"; viewC.style.display="none"; }
+function showC(){ viewC.style.display="block"; viewB.style.display="none"; }
+
+const data = JSON.parse(document.getElementById("stoppstart-data").textContent);
+
+// --- Version B ---
+searchB.addEventListener("input", () => {
+  const q = searchB.value.toLowerCase();
+  resultsB.innerHTML = "";
+
+  data.items.forEach(item => {
+    if (item.description.toLowerCase().includes(q)) {
+      const d = document.createElement("div");
+      d.className = item.type === "STOPP" ? "obs" : "start";
+      d.textContent = item.description;
+      resultsB.appendChild(d);
+    }
+  });
+});
+
+// --- Version C ---
+let selected = [];
+
+drugInput.addEventListener("keydown", e => {
+  if (e.key === "Enter") {
+    selected.push(drugInput.value);
+    const chip = document.createElement("div");
+    chip.textContent = drugInput.value;
+    chip.style.display="inline-block";
+    chip.style.background="#eef";
+    chip.style.margin="5px";
+    drugList.appendChild(chip);
+    drugInput.value="";
+    updateC();
+  }
+});
+
+function updateC(){
+  resultsC.innerHTML = "";
+
+  selected.forEach(sel => {
+    data.items.forEach(item => {
+      if (item.description.toLowerCase().includes(sel.toLowerCase())) {
+        const box = document.createElement("div");
+        box.className = item.type === "STOPP" ? "obs" : "start";
+        box.textContent = item.description;
+        resultsC.appendChild(box);
+      }
+    });
+  });
+}
+</script>
+
+</body>
+</html>
