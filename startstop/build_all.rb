@@ -4,7 +4,7 @@
 require "pdf/reader"
 require "json"
 
-TEMPLATE = "template.html"
+TEMPLATE = "lib/template.html"
 OUTPUT   = "startstop.html"
 
 # ============================================================================
@@ -39,122 +39,27 @@ raw_data = {
   lines: all_lines
 }
 
-File.write("pdf_raw_text.json", JSON.pretty_generate(raw_data))
-puts "Gemt #{all_lines.size} linjer til pdf_raw_text.json"
+File.write("lib/pdf_raw_text.json", JSON.pretty_generate(raw_data))
+puts "Gemt #{all_lines.size} linjer til lib/pdf_raw_text.json"
 
 # Also save a simple text version for easy viewing
-File.write("pdf_raw_text.txt", all_lines.map { |l| "#{l[:line_num].to_s.rjust(5)}: #{l[:text]}" }.join("\n"))
-puts "Gemt også til pdf_raw_text.txt for let læsning"
+File.write("lib/pdf_raw_text.txt", all_lines.map { |l| "#{l[:line_num].to_s.rjust(5)}: #{l[:text]}" }.join("\n"))
+puts "Gemt også til lib/pdf_raw_text.txt for let læsning"
 
 # Use the extracted lines
 lines = all_lines
-puts "Læser #{lines.size} linjer fra pdf_raw_text.json"
+puts "Læser #{lines.size} linjer fra lib/pdf_raw_text.json"
 
 # ============================================================================
-# DRUG DICTIONARY
+# LOAD MAPPINGS FROM LIBRARY FILES
 # ============================================================================
-DRUGS = [
-  "betablokker", "betablokkere", "bisoprolol", "nebivolol", "metoprolol", "carvedilol",
-  "verapamil", "diltiazem",
-  "NSAID", "NSAID-præparater",
-  "SSRI", "SSRI-præparater", "SNRI", "citalopram", "escitalopram",
-  "loopdiuretika", "loop-diuretika", "thiaziddiuretika", "thiazid",
-  "ACE-hæmmere", "ACE-hæmmer",
-  "AT2-antagonist", "AT2-blokkere", "AT-2 blokker",
-  "antikoagulantia", "VKA", "DOAK", "marevan", "apixaban", "dabigatran", "edoxaban", "rivaroxaban",
-  "antipsykotika", "haloperidol",
-  "opioidanalgetika", "opioider", "morfin", "oxycodon", "fentanyl", "buprenorfin", "methadon", "tramadol", "pethidin",
-  "digoxin",
-  "PDE-5-hæmmere", "sildenafil", "tadalafil", "vardenafil",
-  "amiodaron",
-  "metformin",
-  "colchicin",
-  "nitrofurantoin",
-  "bisfosfonater", "bisfosfonat",
-  "metoclopramid",
-  "statiner", "statinbehandling",
-  "ASA", "acetylsalicylsyre",
-  "clopidogrel", "ticagrelor", "prasugrel",
-  "pladehæmmer", "pladehæmmere", "pladehæmmerbehandling",
-  "benzodiazepiner", "zopiclone", "zolpidem",
-  "antiepileptika",
-  "antihistaminer",
-  "antidepressiva", "TCA", "tricykliske antidepressivae",
-  "alfablokker",
-  "antikolinergika", "antikolinerg",
-  "paracetamol",
-  "gabapentinoider", "gabapentin", "pregabalin",
-  "levodopa", "dopaminagonist", "ropinirol", "pramipexol", "rotigotin",
-  "acethylcholinsterasehæmmer", "donepezil", "rivastigmine", "galantamine",
-  "PPI", "protonpumpehæmmer",
-  "laksantia", "laksantium", "lactulose", "macrogol", "sorbitol",
-  "probiotika",
-  "aldosteronantagonist", "spironolakton", "eplerenone",
-  "SGLT-2 hæmmer", "canagliflozin", "dapagliflozin", "empagliflozin", "ertugliflozin",
-  "sacubitril/valsartan", "sacubitril", "valsartan",
-  "erytropoietin", "EPO",
-  "vitamin D", "calcium", "calciumtilskud", "vitamin D-tilskud",
-  "denosumab",
-  "propranolol",
-  "antihypertensiv", "antihypertensivae", "antihypertensivum"
-].freeze
+abort "lib folder not found" unless Dir.exist?("lib")
 
-# ============================================================================
-# DISEASE DICTIONARY
-# ============================================================================
-DISEASES = [
-  "hjertesvigt", "HfREF", "NYHA",
-  "hypertension", "hypotension", "ortostatisk hypotension",
-  "atrieflimren", "atrieflimren/flagren", "bradykardi", "bradyarytmier", "takykardi", "supraventrikulær takykardi",
-  "angina pectoris", "coronarkarsygdom", "koronar", "AKS", "akut koronar syndrom",
-  "aortastenose", "aortaaneurisme", "mitralstenose",
-  "stroke", "TCI", "TIA",
-  "DVT", "dyb venetrombose", "lungeemboli", "venøs tromboemboli",
-  "hyperkaliæmi", "hypokaliæmi", "hyponatriæmi", "hypercalkæmi",
-  "artritis urica", "urinsyregigt",
-  "urininkontinens", "urgeinkontinens", "overaktiv blære",
-  "nyresygdom", "nyreinsufficiens", "kronisk nyreinsufficiens",
-  "leversygdom", "leversvigt", "kronisk leversygdom",
-  "diabetes", "type 2-diabetes",
-  "demens", "Alzheimers demens", "Lewy body demens", "kognitiv svækkelse",
-  "Parkinsons sygdom", "Parkinsonisme",
-  "depression", "angst",
-  "Restless Legs Syndrome", "RLS", "essentiel tremor",
-  "osteoporose", "osteoartrit", "artrose",
-  "GORD", "gastroøsofageal refluxsygdom", "refluxøsofagitis", "ulcussygdom",
-  "forstoppelse", "divertikulose",
-  "KOL", "astma", "respiratorisk insufficiens",
-  "anæmi", "jernmangel",
-  "skrøbelighed", "frailty",
-  "fald", "faldtilfælde", "tilbagevendende faldtilfælde",
-  "blødning", "blødningsrisiko", "GI blødning",
-  "QTc-forlængelse", "arytmi",
-  "glaukom", "katarakt",
-  "BPH", "benign prostatahyperplasi", "forstørret prostata",
-  "insomni", "søvnløshed",
-  "kvalme", "opkastning"
-].freeze
+DRUGS = JSON.parse(File.read("lib/drugs.json")).freeze
+DISEASES = JSON.parse(File.read("lib/diseases.json")).freeze
+SECTION_DRUG_CLASS = JSON.parse(File.read("lib/section_drug_class_mapping.json")).freeze
 
-# ============================================================================
-# SECTION TO DRUG_CLASS MAPPING
-# ============================================================================
-SECTION_DRUG_CLASS = {
-  "Indikation for behandling" => "generel",
-  "Det kardiovaskulære system" => "kardiovaskulær",
-  "Koagulationssystemet" => "antikoagulation",
-  "Centralnervesystemet" => "psykofarmaka",
-  "Det renale system" => "renal",
-  "Det gastrointestinale system" => "gastrointestinal",
-  "Det respiratoriske system" => "respiratorisk",
-  "Det muskuloskeletale system" => "muskuloskeletalt",
-  "Det urogenitale system" => "urogenital",
-  "Det endokrine system" => "endokrin",
-  "Lægemiddelklasser, som øger risikoen for fald blandt sårbare ældre" => "faldrisiko",
-  "Antikolinerg lægemiddelbyrde" => "antikolinerg",
-  "Analgetika" => "smertestillende",
-  "Anbefalede lægemidler" => "generel",
-  "Vacciner" => "vaccine"
-}.freeze
+puts "Loaded #{DRUGS.size} drugs, #{DISEASES.size} diseases, #{SECTION_DRUG_CLASS.size} section mappings"
 
 # ============================================================================
 # PROCESS ITEM - creates one entry per drug mentioned
@@ -332,7 +237,7 @@ puts "START entries: #{items.count { |i| i[:start] }}"
 json_data = JSON.pretty_generate({ items: items })
 
 # Save debug JSON file
-debug_file = "startstop_debug.json"
+debug_file = "lib/startstop_debug.json"
 File.write(debug_file, json_data)
 puts "Debug JSON gemt → #{debug_file}"
 

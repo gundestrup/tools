@@ -6,11 +6,11 @@
 
 # Generated output files (optional - comment out if you want to track these)
 # startstop.html
-# startstop_debug.json
 
-# Raw extraction files (debug files)
-pdf_raw_text.json
-pdf_raw_text.txt
+# Lib folder - track configuration files but exclude generated/debug files
+lib/pdf_raw_text.json
+lib/pdf_raw_text.txt
+lib/startstop_debug.json
 
 # Ruby cache
 *.rbc
@@ -21,3 +21,7 @@ pdf_raw_text.txt
 *.temp
 .DS_Store
 Thumbs.db
+
+# Lib temp files
+lib/*.tmp
+lib/*.bak
