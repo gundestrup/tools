@@ -1,0 +1,23 @@
+# RubyMine IDE files
+.idea/
+
+# PDF file (source document - keep out of version control)
+*.pdf
+
+# Generated output files (optional - comment out if you want to track these)
+# startstop.html
+# startstop_debug.json
+
+# Raw extraction files (debug files)
+pdf_raw_text.json
+pdf_raw_text.txt
+
+# Ruby cache
+*.rbc
+*.rbx
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
