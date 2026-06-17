@@ -18,3 +18,16 @@ Navigate to your local Mendeley Reference Manager application support directory.
 Locate the database file located in
 ```~/Library/Application Support/Mendeley Desktop/www.mendeley.com/<uuid>/search-index.sqlite.```
 Open this .sqlite file using a database browser to query the Documents table and extract the UUIDs natively
+
+## Other sources of info
+https://github.com/orgs/Mendeley/repositories  
+https://github.com/Mendeley/mendeley-api-ruby-example/blob/master/README.md  
+
+## register api
+https://dev.mendeley.com/myapps.html  
+
+## npm lib
+https://www.npmjs.com/package/@mendeley/api  
+
+## pytong ilib
+https://mendeley-python.readthedocs.io/en/latest/
