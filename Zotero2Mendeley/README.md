@@ -14,4 +14,7 @@ Parse the JSON response. The server-assigned UUIDs are mapped as the id string u
 
 ### Option 2: Mendeley Desktop SQLite Database  
 If you use Mendeley Desktop, the application stores all local library data, including UUIDs, in a local SQLite file.  
-Navigate to your local Mendeley Reference Manager application support directory.Locate the database file located in ~/Library/Application Support/Mendeley Desktop/www.mendeley.com/<uuid>/search-index.sqlite.Open this .sqlite file using a database browser to query the Documents table and extract the UUIDs natively
+Navigate to your local Mendeley Reference Manager application support directory.  
+Locate the database file located in
+```~/Library/Application Support/Mendeley Desktop/www.mendeley.com/<uuid>/search-index.sqlite.```
+Open this .sqlite file using a database browser to query the Documents table and extract the UUIDs natively
