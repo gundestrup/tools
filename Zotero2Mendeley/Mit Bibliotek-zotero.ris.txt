@@ -1,0 +1,29 @@
+TY  - JOUR
+ER  - 
+
+TY  - JOUR
+TI  - [Opioids can modulate the immune system].
+AU  - Gundestrup, Svend
+AU  - Sjøgren, Per
+T2  - Ugeskrift for laeger
+AB  - Opioids can modulate and suppress the immune system through central mediated mechanisms. Morphine increases replication and spread of HIV-1. Evidence suggests  that morphine can also enhance growth and spread of some cancer diagnoses like  breast-, prostate- and non-small cell lung cancer. The mechanisms behind the  effects of morphine are mainly mediated by inhibiting apoptosis of cancer cells  and by stimulation of angiogenesis. Some other opioid agonists seem to be  depleted from these effects. Prospective studies are needed to clarify the  immunosuppressive effects of opioids in cancer pain management.
+CY  - Denmark
+DA  - 2014/01/27/
+PY  - 2014
+VL  - 176
+IS  - 5A
+SP  - V08130516
+J2  - Ugeskr Laeger
+LA  - dan
+SN  - 1603-6824 0041-5782
+KW  - Analgesics, Opioid/*pharmacology
+KW  - Angiogenesis Inducing Agents/pharmacology
+KW  - Apoptosis/drug effects
+KW  - Cell Proliferation/drug effects
+KW  - HIV-1/drug effects
+KW  - Humans
+KW  - Immune System/*drug effects
+KW  - Morphine/*pharmacology
+KW  - Neoplasms/immunology/pathology
+ER  - 
+
