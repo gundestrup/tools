@@ -5,7 +5,13 @@ python3 -m venv venv
 source venv/bin/activate
 
 ## Run
+version 1
 python convert_citations.py "minfil.docx" zotero
+version 2
+python convert_citations.py "minfil.docx" zotero
+supports multi convert
+version 3
+analyses file, for type of citation and asks user to select citation style it wants.
 
 # Background
 
