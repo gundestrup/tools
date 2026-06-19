@@ -1,3 +1,13 @@
+# Working
+
+## Install
+python3 -m venv venv
+source venv/bin/activate
+
+## Run
+python convert_citations.py "minfil.docx" zotero
+
+# Background
 
 ## Insppiration
 https://github.com/sBaydin/ZoteroCiteLinker
@@ -84,3 +94,4 @@ bibliografi
   ```xml
 ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]} CSL_BIBLIOGRAPHY </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/>
 ```
+
