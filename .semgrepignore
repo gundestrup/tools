@@ -1,0 +1,56 @@
+# Semgrep ignore list for the tools monorepo
+# See https://semgrep.dev/docs/ignoring-files-folders-code/
+
+# --- Version control / editor ---
+.git
+.gitignore
+.idea
+.DS_Store
+
+# --- Ruby / Rails generated & runtime ---
+**/vendor
+**/tmp
+**/log
+**/storage
+**/node_modules
+**/.bundle
+**/coverage
+**/*.lock
+**/Gemfile.lock
+**/.ruby-version
+**/.rbenv-gemsets
+
+# --- Data files (not code) ---
+**/*.xls
+**/*.xlsx
+**/*.csv
+**/*.sqlite3
+**/*.pdf
+**/*.zip
+**/lib/diseases.json
+**/lib/drugs.json
+**/lib/drug_classes.json
+**/lib/drugs_json_cleaned.json
+**/lib/atc.json
+**/lib/atc_complete.json
+**/lib/pdf_raw_text.json
+**/lib/seponering_data.json
+**/lib/seponeringslisten_text.json
+**/lib/stoppstart_section_mapping.json
+**/lib/Antikolinerge.json
+**/lib/startstop_debug.json
+
+# --- Generated / static HTML (kept out of taint/sast scans) ---
+**/public/*.html
+**/lib/*.html
+**/startstop.html
+**/lib/template.html
+**/lib/annotate.html
+
+# --- Docs & non-code ---
+**/*.md
+**/docs
+
+# --- Keep fixtures out of generic scans (re-enable per-project if needed) ---
+**/spec/fixtures
+**/test/fixtures
