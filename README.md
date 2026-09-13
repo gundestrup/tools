@@ -1,4 +1,7 @@
 # tools
+
+[![codecov](https://codecov.io/gh/gundestrup/tools/branch/main/graph/badge.svg)](https://codecov.io/gh/gundestrup/tools)
+
 Tools / scripts that are helpfull
 
 ## CloneCD conver
