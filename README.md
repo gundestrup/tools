@@ -1,6 +1,5 @@
 # tools
 
-[![codecov](https://codecov.io/gh/gundestrup/tools/branch/main/graph/badge.svg)](https://codecov.io/gh/gundestrup/tools)
 [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=gundestrup_tools&metric=alert_status)](https://sonarcloud.io/dashboard?id=gundestrup_tools)
 
 Tools / scripts that are helpfull
