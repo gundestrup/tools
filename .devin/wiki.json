@@ -1,0 +1,24 @@
+{
+  "repo_notes": [
+    { "content": "Personal utility-script collection. Two main tools: a CloneCD batch converter (Ruby, parallel, uses bchunk) and a website scraper generating RSS XML." },
+    { "content": "CloneCD/clonecd_batch_help.rb converts MODE1/2352 and MODE2/2352 disc images (.ccd/.img/.cue sets) to proper ISO files, scanning current dir + subdirs with parallel processing; depends on bchunk (brew)." },
+    { "content": "erc_scraper/ scrapes course content from the ERC site to produce an RSS feed XML; run_erc_scraper.sh also uploads the result to a server." },
+    { "content": "See README.md plus the per-tool README files (CloneCD/README.clonecd_batch_help.md, erc_scraper/README.ercScraper.md) for usage." }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "Repository purpose and layout — a collection of standalone helper scripts rather than a single application"
+    },
+    {
+      "title": "CloneCD Batch Converter",
+      "purpose": "clonecd_batch_help.rb: input formats (ccd/img/cue, MODE1/MODE2 2352), ISO conversion via bchunk, parallel traversal of directories",
+      "parent": "Overview"
+    },
+    {
+      "title": "ERC Scraper",
+      "purpose": "erc_course.rb + run_erc_scraper.sh: scraping course content into RSS XML and uploading the feed to a server",
+      "parent": "Overview"
+    }
+  ]
+}
