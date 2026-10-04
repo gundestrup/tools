@@ -68,7 +68,7 @@ files.each do |file|
   end
 
   stale_keys.each do |orig|
-    wb = if stale[orig].is_a?(String)
+    wb = if stale[orig].is_a?(String) && stale[orig].start_with?("http")
            stale[orig]
          else
            "https://web.archive.org/web/#{file_year(file, FALLBACK_YEAR)}/#{orig}"
@@ -83,9 +83,9 @@ files.each do |file|
     anno_re = /(?:\*\(\[arkiveret\]|<a href="https:\/\/web\.archive\.org)/
 
     # markdown link target: [text](orig) -> annotation after `)`
-    out = out.gsub(/(\]\(#{esc}\)(?!\s*#{anno_re.source})/) { "#{Regexp.last_match(1)}#{anno}" }
+    out = out.gsub(/(\]\(#{esc}\))(?!\s*#{anno_re.source})/) { "#{Regexp.last_match(1)}#{anno}" }
     # autolink <orig> -> annotation after `>`
-    out = out.gsub(/(<#{esc}>(?!\s*#{anno_re.source})/) { "#{Regexp.last_match(1)}#{anno}" }
+    out = out.gsub(/(<#{esc}>)(?!\s*#{anno_re.source})/) { "#{Regexp.last_match(1)}#{anno}" }
     # bare url — not inside ](...), <...>, an attribute value, or an
     # existing wayback URL (where orig is preceded by `/`); and not a
     # strict prefix of a longer URL (next char must not be url-ish,
