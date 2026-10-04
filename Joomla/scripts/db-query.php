@@ -46,6 +46,12 @@ $database = (string) $config->db;
 $user = (string) $config->user;
 $password = (string) $config->password;
 $prefix = (string) $config->dbprefix;
+// Table identifiers cannot be bound parameters; whitelist the prefix so the
+// interpolated table names below are guaranteed identifier-only characters.
+if (!preg_match('/^[A-Za-z0-9_]+$/', $prefix)) {
+    fwrite(STDERR, "Refusing unsafe table prefix in configuration.php\n");
+    exit(1);
+}
 $sql = str_replace('#__', $prefix, $sql);
 
 if (str_contains($driver, 'pgsql') || str_contains($driver, 'postgres')) {
@@ -64,11 +70,11 @@ if ($mode === 'component-param') {
     $key = (string) ($argv[3] ?? '');
     $value = (string) ($argv[4] ?? '');
     $table = $prefix . 'extensions';
-    $statement = $pdo->prepare("SELECT params FROM {$table} WHERE element=? AND type='component'");
+    $statement = $pdo->prepare("SELECT params FROM {$table} WHERE element=? AND type='component'"); // NOSONAR — identifier-only prefix, validated above
     $statement->execute([$element]);
     $params = json_decode((string) $statement->fetchColumn(), true) ?: [];
     $params[$key] = $value;
-    $statement = $pdo->prepare("UPDATE {$table} SET params=? WHERE element=? AND type='component'");
+    $statement = $pdo->prepare("UPDATE {$table} SET params=? WHERE element=? AND type='component'"); // NOSONAR — identifier-only prefix, validated above
     $statement->execute([json_encode($params, JSON_THROW_ON_ERROR), $element]);
     echo (string) $statement->rowCount();
     exit;
@@ -80,13 +86,13 @@ if ($mode === 'component-param') {
 if ($mode === 'token') {
     $userId = (int) ($argv[2] ?? 0);
     $profiles = $prefix . 'user_profiles';
-    $statement = $pdo->prepare("DELETE FROM {$profiles} WHERE profile_key LIKE 'joomlatoken%' AND user_id=?");
+    $statement = $pdo->prepare("DELETE FROM {$profiles} WHERE profile_key LIKE 'joomlatoken%' AND user_id=?"); // NOSONAR — identifier-only prefix, validated above
     $statement->execute([$userId]);
     $seed = random_bytes(32);
     $token = base64_encode('sha256:' . $userId . ':' . hash_hmac('sha256', $seed, (string) $config->secret));
-    $statement = $pdo->prepare("INSERT INTO {$profiles} (user_id, profile_key, profile_value, ordering) VALUES (?, 'joomlatoken.token', ?, 1)");
+    $statement = $pdo->prepare("INSERT INTO {$profiles} (user_id, profile_key, profile_value, ordering) VALUES (?, 'joomlatoken.token', ?, 1)"); // NOSONAR — identifier-only prefix, validated above
     $statement->execute([$userId, base64_encode($seed)]);
-    $statement = $pdo->prepare("INSERT INTO {$profiles} (user_id, profile_key, profile_value, ordering) VALUES (?, 'joomlatoken.enabled', '1', 2)");
+    $statement = $pdo->prepare("INSERT INTO {$profiles} (user_id, profile_key, profile_value, ordering) VALUES (?, 'joomlatoken.enabled', '1', 2)"); // NOSONAR — identifier-only prefix, validated above
     $statement->execute([$userId]);
     echo $token;
     exit;

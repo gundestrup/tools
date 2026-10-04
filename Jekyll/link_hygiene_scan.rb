@@ -37,7 +37,7 @@ require "uri"
 require "json"
 
 ROOT = ARGV[0] || Dir.pwd
-PLAN_FILE = ARGV[1] || ENV["PLAN_FILE"] || "link_plan.json"
+PLAN_FILE = ARGV[1] || ENV.fetch("PLAN_FILE", "link_plan.json")
 FILE_GLOBS = %w[**/*.md **/*.markdown **/*.html].freeze
 EXCLUDE_DIRS = (%w[_site .git tmp .jekyll-cache node_modules vendor] +
                 (ENV["LINK_EXCLUDE"] || "").split(",").map(&:strip)).freeze

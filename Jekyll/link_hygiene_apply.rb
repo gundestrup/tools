@@ -29,7 +29,7 @@
 require "json"
 
 ROOT = ARGV[0] || Dir.pwd
-PLAN_FILE = ARGV[1] || ENV["PLAN_FILE"] || "link_plan.json"
+PLAN_FILE = ARGV[1] || ENV.fetch("PLAN_FILE", "link_plan.json")
 FALLBACK_YEAR = ENV["FALLBACK_YEAR"] || "2010"
 FILE_GLOBS = %w[**/*.md **/*.markdown **/*.html].freeze
 EXCLUDE_DIRS = (%w[_site .git tmp .jekyll-cache node_modules vendor] +
