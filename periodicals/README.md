@@ -1,5 +1,5 @@
 # Periodicals
-PDF scraper / loopup tool  
+PDF scraper / lookup tool  
 
 ## Tools - OSX
 Needs homebrew

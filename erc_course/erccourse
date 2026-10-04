@@ -1,0 +1,13 @@
+#!/bin/sh
+#Laying the foundation
+
+pass='change_passwrd'
+login='change_username'
+url='change.the-server.url'
+name='erc_courses.xml'
+
+svn update /home/svend/erc_course
+cd /home/svend/erc_course
+ruby erc_cource.rb
+wput --disable-tls --binary --reupload --verbose $name ftp://$login:$pass@$url
+#wput $name ftp://$login:$pass@$url
