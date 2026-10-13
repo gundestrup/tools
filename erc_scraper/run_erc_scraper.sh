@@ -105,9 +105,8 @@ upload_file() {
     case "$UPLOAD_METHOD" in
         ftp)
             echo "Uploading via FTP..."
-            # NOSONAR — the ERC host only accepts plain FTP; sftp is preferred when available
-            wput --disable-tls --binary --reupload --verbose "$OUTPUT_FILE" \
-                "ftp://$FTP_USER:$FTP_PASS@$FTP_HOST$FTP_REMOTE_PATH" || return 1
+            # The ERC host only accepts plain FTP; sftp is preferred when available
+            wput --disable-tls --binary --reupload --verbose "$OUTPUT_FILE" "ftp://$FTP_USER:$FTP_PASS@$FTP_HOST$FTP_REMOTE_PATH" || return 1 # NOSONAR
             ;;
             
         sftp)
