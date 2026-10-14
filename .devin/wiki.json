@@ -1,23 +1,72 @@
 {
   "repo_notes": [
-    { "content": "Personal utility-script collection. Two main tools: a CloneCD batch converter (Ruby, parallel, uses bchunk) and a website scraper generating RSS XML." },
-    { "content": "CloneCD/clonecd_batch_help.rb converts MODE1/2352 and MODE2/2352 disc images (.ccd/.img/.cue sets) to proper ISO files, scanning current dir + subdirs with parallel processing; depends on bchunk (brew)." },
-    { "content": "erc_scraper/ scrapes course content from the ERC site to produce an RSS feed XML; run_erc_scraper.sh also uploads the result to a server." },
-    { "content": "See README.md plus the per-tool README files (CloneCD/README.clonecd_batch_help.md, erc_scraper/README.ercScraper.md) for usage." }
+    {
+      "content": "Personal utility-script collection: standalone tools grouped in per-topic directories, no shared build system. Mostly Ruby, plus Python and POSIX shell scripts."
+    },
+    {
+      "content": "CloneCD/clonecd_batch_help.rb converts MODE1/2352 and MODE2/2352 disc images (.ccd/.img/.cue sets) to proper ISO files, scanning current dir + subdirs with parallel processing; depends on bchunk (brew)."
+    },
+    {
+      "content": "erc_scraper/ scrapes ERC course pages (Mechanize) into an RSS feed XML; run_erc_scraper.sh also uploads the result to a server. erc_course/ is an earlier standalone variant of the same scraper."
+    },
+    {
+      "content": "Jekyll/, Joomla/scripts/, and Shell/ hold reusable helpers extracted from other projects: dead-link hygiene for Jekyll sites, a Joomla extension integration-test toolkit, and shell test/coverage/version templates."
+    },
+    {
+      "content": "startstop/ is a self-contained mini-project (own Gemfile + lib/*.json data) that builds startstop.html, a geriatric medication StartStop list page. Root-level calibra_ocr_ebook.sh is a standalone Tesseract+Calibre OCR pipeline."
+    },
+    {
+      "content": "Quality: SonarCloud + CodeFactor badges; sonar-project.properties and .semgrepignore at root. See README.md plus the per-tool README files for usage."
+    }
   ],
   "pages": [
     {
       "title": "Overview",
-      "purpose": "Repository purpose and layout — a collection of standalone helper scripts rather than a single application"
+      "purpose": "Repository purpose and layout — a collection of standalone helper scripts grouped by topic rather than a single application"
     },
     {
       "title": "CloneCD Batch Converter",
-      "purpose": "clonecd_batch_help.rb: input formats (ccd/img/cue, MODE1/MODE2 2352), ISO conversion via bchunk, parallel traversal of directories",
+      "purpose": "CloneCD/clonecd_batch_help.rb: input formats (ccd/img/cue, MODE1/MODE2 2352), ISO conversion via bchunk, parallel traversal of directories",
       "parent": "Overview"
     },
     {
-      "title": "ERC Scraper",
-      "purpose": "erc_course.rb + run_erc_scraper.sh: scraping course content into RSS XML and uploading the feed to a server",
+      "title": "ERC Scrapers",
+      "purpose": "erc_scraper/ (erc_course.rb + run_erc_scraper.sh): scraping ERC course pages into RSS XML and uploading the feed to a server; erc_course/ is the earlier standalone variant",
+      "parent": "Overview"
+    },
+    {
+      "title": "Jekyll Utilities",
+      "purpose": "Jekyll/: link_hygiene_scan.rb probes external links and writes a JSON plan, link_hygiene_apply.rb rewrites dead links to web.archive.org and upgrades live ones, install-hooks.sh enables tracked git hooks",
+      "parent": "Overview"
+    },
+    {
+      "title": "Joomla Test Toolkit",
+      "purpose": "Joomla/scripts/: reusable integration-test toolkit for Joomla extensions — install/uninstall via the admin web installer, db-query.php and bootstrap.php inside containers, php-diagnostics.sh, and pcov coverage collection/merge scripts",
+      "parent": "Overview"
+    },
+    {
+      "title": "Shell Helpers",
+      "purpose": "Shell/: reusable POSIX sh templates — test-helpers.sh (pass/fail logging for integration suites), kcov-coverage.sh (Cobertura XML via a throwaway container), update-version.sh (single-source versions.env freshness gate)",
+      "parent": "Overview"
+    },
+    {
+      "title": "Media Tools",
+      "purpose": "MP4VobSub2SRT/subtitles.rb (MP4Box + vobsub2srt subtitle extraction from MP4) and calibra_ocr_ebook.sh (Tesseract + Calibre ebook-convert OCR pipeline for PDFs/ebooks)",
+      "parent": "Overview"
+    },
+    {
+      "title": "Periodicals Metadata",
+      "purpose": "periodicals/: periodicals-getmeta.rb — interactive PDF metadata tool (OCR fallback, ISSN checksum validation, Crossref/Wikidata lookup, XMP/PRISM embed via exiftool, resumable state.jsonl) plus renamer_national_geopraphic.rb",
+      "parent": "Overview"
+    },
+    {
+      "title": "Zotero2Mendeley",
+      "purpose": "Zotero2Mendeley/: scripts (converter.py, convert2.py, convert3.py, Zotero2Mendeley.rb) converting Zotero citations embedded in .docx files to Mendeley format",
+      "parent": "Overview"
+    },
+    {
+      "title": "StartStop Generator",
+      "purpose": "startstop/: build_all.rb renders startstop.html from lib/*.json drug data and lib/template.html; its own Gemfile/lockfile make it a self-contained sub-project",
       "parent": "Overview"
     }
   ]
