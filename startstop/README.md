@@ -4,6 +4,7 @@ Seponerings liste 2026: https://filer.medicinraadet.dk/media/bwsnokxj/23768_medi
 Start stop databasen: https://www.interaktionsdatabasen.dk/  
 ## kørsel
 ruby build_all.rb  
+Læg kilde-PDF'en fra linket ovenfor i mappen først. Scriptet bruger den første `*.pdf`; PDF-filer er ignoreret af Git og følger derfor ikke med et clone.
 
 ## CGA links
 https://www.cgakit.com/stopp-start-v3
