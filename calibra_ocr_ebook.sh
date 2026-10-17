@@ -75,4 +75,9 @@ find "$INPUT_DIR" -maxdepth 1 -type f -iname "*.pdf" | while read -r pdf; do
 
         # 3) Run Tesseract OCR
         ocr_pdf="${base}.pdf"
-        "$TESSERACT_BIN" "$
+        "$TESSERACT_BIN" "$orig" "$base" -l "$OCR_LANG" pdf
+    fi
+
+    # 4) Convert the searchable PDF to an ebook.
+    "$CALIBRE_BIN" "$ocr_pdf" "${base}.epub"
+done

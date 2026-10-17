@@ -34,10 +34,11 @@ mkdir -p "$COVERAGE_DIR"
 # Mount points must match the paths the script expects in production.
 # --cap-add SYS_PTRACE + seccomp=unconfined are REQUIRED: kcov works via
 # ptrace, which Docker's default seccomp profile blocks.
+# CHANGEME: set any environment variables the script needs.
 docker run --rm \
   --cap-add SYS_PTRACE --security-opt seccomp=unconfined \
   --network "$_net" \
-  -e PGHOST=db-test \                             # CHANGEME: env the script needs
+  -e PGHOST=db-test \
   -e PGUSER=pgdog \
   -e PGPASSWORD="$TEST_PGDOG_PASSWORD" \
   -e PGDATABASE=pgdog \
