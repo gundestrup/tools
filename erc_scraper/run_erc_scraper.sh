@@ -36,7 +36,7 @@ prompt_upload_method() {
         echo "  3) SCP (secure, fast)"
         echo "  4) rsync (secure, efficient for repeated uploads)"
         echo ""
-        read -p "Enter choice [1-4]: " choice
+        read -r -p "Enter choice [1-4]: " choice
         
         case "$choice" in
             1) UPLOAD_METHOD="ftp" ;;

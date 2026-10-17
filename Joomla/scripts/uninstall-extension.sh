@@ -113,7 +113,7 @@ UNINSTALL_WARNINGS=""
 if echo "$UNINSTALL_RESULT_HTML" | grep -iq "File does not exist"; then
     UNINSTALL_WARNINGS=$(echo "$UNINSTALL_RESULT_HTML" | grep -io 'JInstaller[^<]*File does not exist[^<]*\|File does not exist[^<]*' | head -10 || true)
     echo "[uninstall] WARNING: Uninstaller warnings detected (missing files):"
-    echo "$UNINSTALL_WARNINGS" | sed 's/^/  /'
+    printf '  %s\n' "${UNINSTALL_WARNINGS//$'\n'/$'\n'  }"
 fi
 
 sleep 2
