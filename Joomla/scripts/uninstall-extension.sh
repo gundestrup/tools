@@ -110,7 +110,7 @@ echo "[uninstall] Uninstall HTTP code: $UNINSTALL_CODE"
 # uninstalled" is normal Joomla cascade noise.
 UNINSTALL_RESULT_HTML=$(cat "$RESULT_FILE" 2>/dev/null || echo "")
 UNINSTALL_WARNINGS=""
-if echo "$UNINSTALL_RESULT_HTML" | grep -iq "File does not exist"; then
+if grep -iq "File does not exist" <<<"$UNINSTALL_RESULT_HTML"; then
     UNINSTALL_WARNINGS=$(echo "$UNINSTALL_RESULT_HTML" | grep -io 'JInstaller[^<]*File does not exist[^<]*\|File does not exist[^<]*' | head -10 || true)
     echo "[uninstall] WARNING: Uninstaller warnings detected (missing files):"
     printf '  %s\n' "${UNINSTALL_WARNINGS//$'\n'/$'\n'  }"
