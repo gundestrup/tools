@@ -4,7 +4,9 @@
 
 [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=gundestrup_tools&metric=alert_status)](https://sonarcloud.io/dashboard?id=gundestrup_tools)
 [![CodeFactor](https://www.codefactor.io/repository/github/gundestrup/tools/badge)](https://www.codefactor.io/repository/github/gundestrup/tools)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/gundestrup/tools)
+<!-- markdownlint-disable MD033 -->
+[<img src="https://devin.ai/assets/askdeepwiki.png" alt="Ask DeepWiki" height="20"/>](https://deepwiki.com/gundestrup/tools)
+<!-- markdownlint-enable MD033 -->
 [![License](https://img.shields.io/github/license/gundestrup/tools)](LICENSE)
 
 Tools / scripts that are helpful
